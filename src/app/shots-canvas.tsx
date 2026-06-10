@@ -2,7 +2,7 @@
 
 import { Squircle } from "@cornerkit/react";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CSSProperties,
   PointerEvent,
@@ -22,9 +22,11 @@ const card = {
   gap: 24,
 } as const;
 
-const columns = 9;
-const rows = 9;
-const cards = Array.from({ length: columns * rows }, (_, index) => index);
+const shotPattern = {
+  rowStep: 1,
+  columnStep: 4,
+} as const;
+
 const revealStartDelay = 100;
 const cardSettleDuration = 420;
 const backButtonLeaveDuration = 480;
@@ -33,166 +35,232 @@ const fallbackViewport = {
   height: 900,
 } as const;
 
-type ShotPosition = {
-  row: number;
-  column: number;
+type CanvasOffset = {
+  x: number;
+  y: number;
 };
 
-function isInsideGrid(position: ShotPosition) {
-  return (
-    position.row >= 0 &&
-    position.row < rows &&
-    position.column >= 0 &&
-    position.column < columns
+type CanvasMetrics = {
+  cardWidth: number;
+  cardHeight: number;
+  columnGap: number;
+  rowGap: number;
+  stepX: number;
+  stepY: number;
+};
+
+type DragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  moveThreshold: number;
+  didMove: boolean;
+};
+
+type VirtualCard = {
+  centerDistance: number;
+  column: number;
+  key: string;
+  left: number;
+  row: number;
+  shotIndex: number;
+  top: number;
+  visibleArea: number;
+};
+
+type ShotsCanvasProps = {
+  isVisible: boolean;
+  onBack: () => void;
+};
+
+const initialOffset = {
+  x: 0,
+  y: 0,
+} as const;
+
+const fallbackMetrics = {
+  cardWidth: card.width,
+  cardHeight: card.height,
+  columnGap: card.gap,
+  rowGap: card.gap,
+  stepX: card.width + card.gap,
+  stepY: card.height + card.gap,
+} as const;
+
+function positiveModulo(value: number, length: number) {
+  return ((value % length) + length) % length;
+}
+
+function getCardKey(row: number, column: number) {
+  return `${row}:${column}`;
+}
+
+function getCardLayout(
+  row: number,
+  column: number,
+  {
+    cardHeight,
+    cardWidth,
+    stepX,
+    stepY,
+  }: Pick<CanvasMetrics, "cardHeight" | "cardWidth" | "stepX" | "stepY">,
+) {
+  const brickOffset = row % 2 === 0 ? 0 : stepX / 2;
+
+  return {
+    left: column * stepX + brickOffset - cardWidth / 2,
+    top: row * stepY - cardHeight / 2,
+  };
+}
+
+function getShotIndexForPosition(row: number, column: number) {
+  if (shots.length === 0) {
+    return null;
+  }
+
+  return positiveModulo(
+    row * shotPattern.rowStep + column * shotPattern.columnStep,
+    shots.length,
   );
 }
 
-function getPositionKey(position: ShotPosition) {
-  return `${position.row}:${position.column}`;
-}
+function getCanvasMetrics(canvas: HTMLElement | null): CanvasMetrics {
+  const cardElement = canvas?.querySelector<HTMLElement>("[data-canvas-card]");
+  const canvasStyles = canvas ? window.getComputedStyle(canvas) : null;
+  const columnGap = Number.parseFloat(
+    canvasStyles?.getPropertyValue("--shot-gap") ?? "",
+  );
+  const rowGap = Number.parseFloat(
+    canvasStyles?.getPropertyValue("--shot-gap") ?? "",
+  );
+  const cardWidth = cardElement?.offsetWidth ?? card.width;
+  const cardHeight = cardElement?.offsetHeight ?? card.height;
+  const normalizedColumnGap = Number.isFinite(columnGap) ? columnGap : card.gap;
+  const normalizedRowGap = Number.isFinite(rowGap) ? rowGap : card.gap;
 
-function getPositionAngle(position: ShotPosition, center: ShotPosition) {
-  const rowOffset = position.row % 2 === 1 ? 0.5 : 0;
-  const centerRowOffset = center.row % 2 === 1 ? 0.5 : 0;
-  const x = position.column + rowOffset - (center.column + centerRowOffset);
-  const y = (position.row - center.row) * ((card.height + card.gap) / (card.width + card.gap));
-  const angle = Math.atan2(y, x);
-
-  return angle < 0 ? angle + Math.PI * 2 : angle;
-}
-
-function sortPositionsByAngle(
-  positions: ShotPosition[],
-  center: ShotPosition,
-  startAngle: number,
-) {
-  return [...positions].sort((first, second) => {
-    const firstAngle =
-      (getPositionAngle(first, center) - startAngle + Math.PI * 2) %
-      (Math.PI * 2);
-    const secondAngle =
-      (getPositionAngle(second, center) - startAngle + Math.PI * 2) %
-      (Math.PI * 2);
-
-    return firstAngle - secondAngle;
-  });
-}
-
-function buildPetalPositions() {
-  const center = {
-    row: Math.floor(rows / 2),
-    column: Math.floor(columns / 2),
+  return {
+    cardWidth,
+    cardHeight,
+    columnGap: normalizedColumnGap,
+    rowGap: normalizedRowGap,
+    stepX: cardWidth + normalizedColumnGap,
+    stepY: cardHeight + normalizedRowGap,
   };
-  const positions: ShotPosition[] = [center];
-  const maxRadius = Math.max(center.row, center.column);
-  let ringStartAngle = 0;
-
-  for (let radius = 1; radius <= maxRadius; radius += 1) {
-    const ringPositions: ShotPosition[] = [];
-    const seenRingPositions = new Set<string>();
-
-    for (let rowOffset = -radius; rowOffset <= radius; rowOffset += 1) {
-      for (
-        let columnOffset = -radius;
-        columnOffset <= radius;
-        columnOffset += 1
-      ) {
-        if (Math.max(Math.abs(rowOffset), Math.abs(columnOffset)) !== radius) {
-          continue;
-        }
-
-        const position = {
-          row: center.row + rowOffset,
-          column: center.column + columnOffset,
-        };
-        const key = getPositionKey(position);
-
-        if (!isInsideGrid(position) || seenRingPositions.has(key)) {
-          continue;
-        }
-
-        seenRingPositions.add(key);
-        ringPositions.push(position);
-      }
-    }
-
-    const sortedRingPositions = sortPositionsByAngle(
-      ringPositions,
-      center,
-      ringStartAngle,
-    );
-
-    positions.push(...sortedRingPositions);
-    ringStartAngle = getPositionAngle(
-      sortedRingPositions[sortedRingPositions.length - 1] ?? center,
-      center,
-    );
-  }
-
-  return positions;
 }
 
-const petalPositions = buildPetalPositions();
-
-function getOrderedPositionKeys(positions: ShotPosition[]) {
-  return positions.map(getPositionKey).join("|");
-}
-
-function buildVisibleFirstPositions({
-  cardHeight,
-  cardWidth,
-  columnGap,
-  rowGap,
+function getVisibleArea({
+  bottom,
+  left,
+  right,
+  top,
   viewportHeight,
   viewportWidth,
 }: {
-  cardHeight: number;
-  cardWidth: number;
-  columnGap: number;
-  rowGap: number;
+  bottom: number;
+  left: number;
+  right: number;
+  top: number;
   viewportHeight: number;
   viewportWidth: number;
 }) {
-  const gridWidth = cardWidth * columns + columnGap * (columns - 1);
-  const gridHeight = cardHeight * rows + rowGap * (rows - 1);
-  const gridLeft = (viewportWidth - gridWidth) / 2;
-  const gridTop = (viewportHeight - gridHeight) / 2;
-  const viewportCenterX = viewportWidth / 2;
-  const viewportCenterY = viewportHeight / 2;
+  const visibleWidth = Math.max(
+    0,
+    Math.min(right, viewportWidth) - Math.max(left, 0),
+  );
+  const visibleHeight = Math.max(
+    0,
+    Math.min(bottom, viewportHeight) - Math.max(top, 0),
+  );
 
-  return [...petalPositions]
-    .map((position, fallbackIndex) => {
-      const brickOffset =
-        position.row % 2 === 1 ? (cardWidth + columnGap) / 2 : 0;
-      const left = gridLeft + position.column * (cardWidth + columnGap) + brickOffset;
-      const top = gridTop + position.row * (cardHeight + rowGap);
-      const right = left + cardWidth;
-      const bottom = top + cardHeight;
-      const visibleWidth = Math.max(
-        0,
-        Math.min(right, viewportWidth) - Math.max(left, 0),
-      );
-      const visibleHeight = Math.max(
-        0,
-        Math.min(bottom, viewportHeight) - Math.max(top, 0),
-      );
-      const visibleArea = visibleWidth * visibleHeight;
-      const centerX = left + cardWidth / 2;
-      const centerY = top + cardHeight / 2;
-      const centerDistance = Math.hypot(
-        centerX - viewportCenterX,
-        centerY - viewportCenterY,
-      );
+  return visibleWidth * visibleHeight;
+}
 
-      return {
-        fallbackIndex,
-        position,
-        centerDistance,
-        top,
+function getVirtualCardKeys(cardsToCompare: VirtualCard[]) {
+  return cardsToCompare.map(({ key, shotIndex }) => `${key}:${shotIndex}`).join("|");
+}
+
+function buildVirtualCards({
+  metrics,
+  offset,
+  viewportHeight,
+  viewportWidth,
+}: {
+  metrics: CanvasMetrics;
+  offset: CanvasOffset;
+  viewportHeight: number;
+  viewportWidth: number;
+}) {
+  if (shots.length === 0) {
+    return [];
+  }
+
+  const viewportWorldLeft = -offset.x - viewportWidth / 2;
+  const viewportWorldRight = -offset.x + viewportWidth / 2;
+  const viewportWorldTop = -offset.y - viewportHeight / 2;
+  const viewportWorldBottom = -offset.y + viewportHeight / 2;
+  const rowStart =
+    Math.floor((viewportWorldTop - metrics.cardHeight) / metrics.stepY) - 1;
+  const rowEnd =
+    Math.ceil((viewportWorldBottom + metrics.cardHeight) / metrics.stepY) + 1;
+  const columnStart =
+    Math.floor(
+      (viewportWorldLeft - metrics.cardWidth - metrics.stepX / 2) /
+        metrics.stepX,
+    ) - 1;
+  const columnEnd =
+    Math.ceil(
+      (viewportWorldRight + metrics.cardWidth + metrics.stepX / 2) /
+        metrics.stepX,
+    ) + 1;
+  const candidates: VirtualCard[] = [];
+
+  for (let row = rowStart; row <= rowEnd; row += 1) {
+    for (let column = columnStart; column <= columnEnd; column += 1) {
+      const shotIndex = getShotIndexForPosition(row, column);
+
+      if (shotIndex === null) {
+        continue;
+      }
+
+      const { left, top } = getCardLayout(row, column, metrics);
+      const screenLeft = viewportWidth / 2 + offset.x + left;
+      const screenTop = viewportHeight / 2 + offset.y + top;
+      const screenRight = screenLeft + metrics.cardWidth;
+      const screenBottom = screenTop + metrics.cardHeight;
+      const visibleArea = getVisibleArea({
+        bottom: screenBottom,
+        left: screenLeft,
+        right: screenRight,
+        top: screenTop,
+        viewportHeight,
+        viewportWidth,
+      });
+
+      if (visibleArea <= 0) {
+        continue;
+      }
+
+      candidates.push({
+        centerDistance: Math.hypot(
+          screenLeft + metrics.cardWidth / 2 - viewportWidth / 2,
+          screenTop + metrics.cardHeight / 2 - viewportHeight / 2,
+        ),
+        column,
+        key: getCardKey(row, column),
         left,
+        row,
+        shotIndex,
+        top,
         visibleArea,
-      };
-    })
+      });
+    }
+  }
+
+  const usedShotIndexes = new Set<number>();
+
+  return candidates
     .sort((first, second) => {
       if (second.visibleArea !== first.visibleArea) {
         return second.visibleArea - first.visibleArea;
@@ -206,74 +274,94 @@ function buildVisibleFirstPositions({
         return first.top - second.top;
       }
 
-      if (first.left !== second.left) {
-        return first.left - second.left;
+      return first.left - second.left;
+    })
+    .filter(({ shotIndex }) => {
+      if (usedShotIndexes.has(shotIndex)) {
+        return false;
       }
 
-      return first.fallbackIndex - second.fallbackIndex;
+      usedShotIndexes.add(shotIndex);
+      return true;
     })
-    .map(({ position }) => position);
+    .sort((first, second) => {
+      if (first.top !== second.top) {
+        return first.top - second.top;
+      }
+
+      return first.left - second.left;
+    });
 }
 
-function buildFallbackShotPositions() {
-  return buildVisibleFirstPositions({
-    cardHeight: card.height,
-    cardWidth: card.width,
-    columnGap: card.gap,
-    rowGap: card.gap,
-    viewportHeight: fallbackViewport.height,
-    viewportWidth: fallbackViewport.width,
-  });
+function applyCanvasOffset(canvas: HTMLElement | null, offset: CanvasOffset) {
+  canvas?.style.setProperty("--canvas-x", `${offset.x}px`);
+  canvas?.style.setProperty("--canvas-y", `${offset.y}px`);
 }
 
-type DragState = {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  offsetX: number;
-  offsetY: number;
-  wrapWidth: number;
-  wrapHeight: number;
-  moveThreshold: number;
-  didMove: boolean;
-};
+function formatPathNumber(value: number) {
+  const roundedValue = Math.round(value * 100) / 100;
 
-type ShotsCanvasProps = {
-  isVisible: boolean;
-  onBack: () => void;
-};
-
-function wrapOffset(value: number, size: number) {
-  return ((((value + size / 2) % size) + size) % size) - size / 2;
+  return Object.is(roundedValue, -0) ? "0" : `${roundedValue}`;
 }
 
-function getCanvasMetrics(canvas: HTMLElement | null) {
-  const cardElement = canvas?.querySelector<HTMLElement>("[data-canvas-card]");
-  const gridElement = canvas?.querySelector<HTMLElement>("[data-canvas-grid]");
-  const gridRect = gridElement?.getBoundingClientRect();
-  const gridStyles = gridElement ? window.getComputedStyle(gridElement) : null;
-  const columnGap = Number.parseFloat(gridStyles?.columnGap ?? "");
-  const rowGap = Number.parseFloat(gridStyles?.rowGap ?? "");
-  const cardWidth = cardElement?.offsetWidth ?? card.width;
-  const cardHeight = cardElement?.offsetHeight ?? card.height;
-  const normalizedColumnGap = Number.isFinite(columnGap) ? columnGap : card.gap;
-  const normalizedRowGap = Number.isFinite(rowGap) ? rowGap : card.gap;
-  const gridLayoutWidth =
-    cardWidth * columns + normalizedColumnGap * (columns - 1);
-  const gridScale =
-    gridRect && gridLayoutWidth > 0 ? gridRect.width / gridLayoutWidth : 1;
+function getSquircleInsetPath(width: number, height: number, radius: number) {
+  if (width <= 0 || height <= 0 || radius <= 0) {
+    return [
+      "M 0 0",
+      `L ${formatPathNumber(width)} 0`,
+      `L ${formatPathNumber(width)} ${formatPathNumber(height)}`,
+      `L 0 ${formatPathNumber(height)}`,
+      "Z",
+    ].join(" ");
+  }
 
-  return {
-    cardWidth,
-    cardHeight,
-    columnGap: normalizedColumnGap,
-    gridLeft: gridRect?.left ?? 0,
-    gridScale,
-    gridTop: gridRect?.top ?? 0,
-    rowGap: normalizedRowGap,
-    wrapWidth: (cardWidth + normalizedColumnGap) * columns,
-    wrapHeight: (cardHeight + normalizedRowGap) * rows,
-  };
+  const cornerRadius = Math.min(radius, width / 2, height / 2);
+  const cornerReach = cornerRadius * 2;
+  const curveHandle =
+    cornerRadius * Math.tan(Math.PI / 8) * Math.SQRT1_2;
+  const softHandle = (cornerReach - curveHandle * 2) / 3;
+  const longHandle = softHandle * 2;
+  const curveEnd = longHandle + softHandle + curveHandle;
+
+  return [
+    `M ${formatPathNumber(width - cornerReach)} 0`,
+    `c ${formatPathNumber(longHandle)} 0 ${formatPathNumber(
+      longHandle + softHandle,
+    )} 0 ${formatPathNumber(curveEnd)} ${formatPathNumber(curveHandle)}`,
+    `c ${formatPathNumber(curveHandle)} ${formatPathNumber(
+      curveHandle,
+    )} ${formatPathNumber(curveHandle)} ${formatPathNumber(
+      softHandle + curveHandle,
+    )} ${formatPathNumber(curveHandle)} ${formatPathNumber(curveEnd)}`,
+    `L ${formatPathNumber(width)} ${formatPathNumber(height - cornerReach)}`,
+    `c 0 ${formatPathNumber(longHandle)} 0 ${formatPathNumber(
+      longHandle + softHandle,
+    )} ${formatPathNumber(-curveHandle)} ${formatPathNumber(curveEnd)}`,
+    `c ${formatPathNumber(-curveHandle)} ${formatPathNumber(
+      curveHandle,
+    )} ${formatPathNumber(-(softHandle + curveHandle))} ${formatPathNumber(
+      curveHandle,
+    )} ${formatPathNumber(-curveEnd)} ${formatPathNumber(curveHandle)}`,
+    `L ${formatPathNumber(cornerReach)} ${formatPathNumber(height)}`,
+    `c ${formatPathNumber(-longHandle)} 0 ${formatPathNumber(
+      -(longHandle + softHandle),
+    )} 0 ${formatPathNumber(-curveEnd)} ${formatPathNumber(-curveHandle)}`,
+    `c ${formatPathNumber(-curveHandle)} ${formatPathNumber(
+      -curveHandle,
+    )} ${formatPathNumber(-curveHandle)} ${formatPathNumber(
+      -(softHandle + curveHandle),
+    )} ${formatPathNumber(-curveHandle)} ${formatPathNumber(-curveEnd)}`,
+    `L 0 ${formatPathNumber(cornerReach)}`,
+    `c 0 ${formatPathNumber(-longHandle)} 0 ${formatPathNumber(
+      -(longHandle + softHandle),
+    )} ${formatPathNumber(curveHandle)} ${formatPathNumber(-curveEnd)}`,
+    `c ${formatPathNumber(curveHandle)} ${formatPathNumber(
+      -curveHandle,
+    )} ${formatPathNumber(softHandle + curveHandle)} ${formatPathNumber(
+      -curveHandle,
+    )} ${formatPathNumber(curveEnd)} ${formatPathNumber(-curveHandle)}`,
+    "Z",
+  ].join(" ");
 }
 
 function getDurationInMilliseconds(duration: string) {
@@ -303,21 +391,6 @@ function getCanvasExitDuration(canvas: HTMLElement | null) {
     lastCardDelay + cardSettleDuration,
     backButtonLeaveDuration,
   );
-}
-
-function getShotIndexForIndex(index: number, shotPositions: ShotPosition[]) {
-  const row = Math.floor(index / columns);
-  const column = index % columns;
-
-  return shotPositions.findIndex(
-    (position) => position.row === row && position.column === column,
-  );
-}
-
-function getShotForIndex(index: number, shotPositions: ShotPosition[]) {
-  const shotIndex = getShotIndexForIndex(index, shotPositions);
-
-  return shots[shotIndex];
 }
 
 function getShotFromCardElement(cardElement: HTMLElement | null | undefined) {
@@ -378,100 +451,78 @@ function getShotFromElementPoint(clientX: number, clientY: number) {
   return matchingCards[0]?.shot ?? null;
 }
 
-function getShotFromCanvasPoint(
-  canvas: HTMLElement | null,
-  clientX: number,
-  clientY: number,
-  shotPositions: ShotPosition[],
-) {
-  if (!canvas) {
-    return null;
-  }
+function SquircleInsetBorder({ radius }: { radius: number }) {
+  const borderRef = useRef<SVGSVGElement | null>(null);
+  const [dimensions, setDimensions] = useState<{
+    height: number;
+    width: number;
+  }>({
+    width: card.width,
+    height: card.height,
+  });
 
-  const {
-    cardHeight,
-    cardWidth,
-    columnGap,
-    gridLeft,
-    gridScale,
-    gridTop,
-    rowGap,
-  } = getCanvasMetrics(canvas);
+  useEffect(() => {
+    const borderElement = borderRef.current;
+    const cardElement = borderElement?.parentElement;
 
-  const matchingShot = shotPositions
-    .map((position, shotIndex) => {
-      const brickOffset =
-        position.row % 2 === 1 ? (cardWidth + columnGap) / 2 : 0;
-      const left =
-        gridLeft +
-        (position.column * (cardWidth + columnGap) + brickOffset) * gridScale;
-      const top =
-        gridTop + position.row * (cardHeight + rowGap) * gridScale;
-      const width = cardWidth * gridScale;
-      const height = cardHeight * gridScale;
+    if (!borderElement || !cardElement) {
+      return;
+    }
 
-      return {
-        bottom: top + height,
-        centerX: left + width / 2,
-        centerY: top + height / 2,
-        left,
-        right: left + width,
-        shot: shots[shotIndex],
-        top,
-      };
-    })
-    .filter(
-      ({ bottom, left, right, shot, top }) =>
-        shot &&
-        clientX >= left &&
-        clientX <= right &&
-        clientY >= top &&
-        clientY <= bottom,
-    )
-    .sort((first, second) => {
-      const firstDistance = Math.hypot(
-        clientX - first.centerX,
-        clientY - first.centerY,
+    const updateDimensions = () => {
+      const { clientHeight: height, clientWidth: width } = cardElement;
+
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+
+      setDimensions((currentDimensions) =>
+        Math.abs(currentDimensions.width - width) < 0.5 &&
+        Math.abs(currentDimensions.height - height) < 0.5
+          ? currentDimensions
+          : { width, height },
       );
-      const secondDistance = Math.hypot(
-        clientX - second.centerX,
-        clientY - second.centerY,
-      );
+    };
+    const observer = new ResizeObserver(updateDimensions);
 
-      return firstDistance - secondDistance;
-    })[0];
+    updateDimensions();
+    observer.observe(cardElement);
 
-  return matchingShot?.shot ?? null;
-}
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
-function getShotFromPoint(
-  canvas: HTMLElement | null,
-  clientX: number,
-  clientY: number,
-  shotPositions: ShotPosition[],
-) {
   return (
-    getShotFromCanvasPoint(canvas, clientX, clientY, shotPositions) ??
-    getShotFromElementPoint(clientX, clientY)
+    <svg
+      ref={borderRef}
+      className={styles.canvasCardBorder}
+      viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        className={styles.canvasCardBorderPath}
+        d={getSquircleInsetPath(dimensions.width, dimensions.height, radius)}
+      />
+    </svg>
   );
 }
 
 function ShotCanvasCard({
-  index,
+  cardData,
   isCanvasVisible,
   onPressStart,
-  shotPositions,
 }: {
-  index: number;
+  cardData: VirtualCard;
   isCanvasVisible: boolean;
   onPressStart: (shot: Shot) => void;
-  shotPositions: ShotPosition[];
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const [isRevealed, setIsRevealed] = useState(false);
   const [revealDelay, setRevealDelay] = useState(0);
-  const shotIndex = getShotIndexForIndex(index, shotPositions);
-  const shot = getShotForIndex(index, shotPositions);
+  const shot = shots[cardData.shotIndex];
 
   useEffect(() => {
     if (!isCanvasVisible) {
@@ -515,6 +566,10 @@ function ShotCanvasCard({
     };
   }, [isCanvasVisible]);
 
+  if (!shot) {
+    return null;
+  }
+
   return (
     <Squircle
       ref={elementRef}
@@ -522,20 +577,18 @@ function ShotCanvasCard({
       smoothing={1}
       data-canvas-card="true"
       data-card-revealed={isRevealed ? "true" : undefined}
-      className={`${styles.canvasCard} ${shot ? styles.canvasCardHasData : ""} ${
+      className={`${styles.canvasCard} ${styles.canvasCardHasData} ${
         isRevealed ? styles.canvasCardRevealed : ""
       }`}
-      data-shot-card={shot ? "true" : undefined}
-      data-shot-index={shot ? shotIndex : undefined}
-      role={shot ? "button" : undefined}
-      tabIndex={shot ? 0 : undefined}
+      data-shot-card="true"
+      data-shot-index={cardData.shotIndex}
+      role="button"
+      tabIndex={0}
       onPointerDown={() => {
-        if (shot) {
-          onPressStart(shot);
-        }
+        onPressStart(shot);
       }}
       onKeyDown={(event) => {
-        if (!shot || (event.key !== "Enter" && event.key !== " ")) {
+        if (event.key !== "Enter" && event.key !== " ") {
           return;
         }
 
@@ -544,36 +597,28 @@ function ShotCanvasCard({
       }}
       style={
         {
-          "--card-index": index,
           "--card-delay": `${revealDelay}ms`,
+          "--card-x": `${cardData.left}px`,
+          "--card-y": `${cardData.top}px`,
         } as CSSProperties
       }
     >
-      <Squircle
-        radius={card.radius - 2}
-        smoothing={1}
-        className={styles.canvasCardInner}
-      >
-        {shot ? (
-          <>
-            <Image
-              className={styles.canvasCardImage}
-              src={getShotThumbnail(shot)}
-              alt={shot.alt}
-              fill
-              sizes="(max-width: 560px) min(360px, calc(100vw - 40px)), 520px"
-              quality={100}
-              unoptimized
-              draggable={false}
-            />
-            <div className={styles.canvasCardBlur} aria-hidden="true" />
-            <div className={styles.canvasCardMeta}>
-              <p className={styles.canvasCardTitle}>{shot.title}</p>
-              <p className={styles.canvasCardSubtitle}>{shot.subtitle}</p>
-            </div>
-          </>
-        ) : null}
-      </Squircle>
+      <Image
+        className={styles.canvasCardImage}
+        src={getShotThumbnail(shot)}
+        alt={shot.alt}
+        fill
+        sizes="(max-width: 560px) min(360px, calc(100vw - 40px)), 520px"
+        quality={100}
+        unoptimized
+        draggable={false}
+      />
+      <div className={styles.canvasCardBlur} aria-hidden="true" />
+      <div className={styles.canvasCardMeta}>
+        <p className={styles.canvasCardTitle}>{shot.title}</p>
+        <p className={styles.canvasCardSubtitle}>{shot.subtitle}</p>
+      </div>
+      <SquircleInsetBorder radius={card.radius} />
     </Squircle>
   );
 }
@@ -582,51 +627,68 @@ export function ShotsCanvas({ isVisible, onBack }: ShotsCanvasProps) {
   const canvasRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const exitTimerRef = useRef<number | null>(null);
-  const offsetRef = useRef({ x: 0, y: 0 });
+  const offsetRef = useRef<CanvasOffset>(initialOffset);
   const pressedShotRef = useRef<Shot | null>(null);
+  const virtualFrameRef = useRef<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
-  const [orderedShotPositions, setOrderedShotPositions] = useState(
-    buildFallbackShotPositions,
+  const [virtualCards, setVirtualCards] = useState(() =>
+    buildVirtualCards({
+      metrics: fallbackMetrics,
+      offset: initialOffset,
+      viewportHeight: fallbackViewport.height,
+      viewportWidth: fallbackViewport.width,
+    }),
   );
   const [selectedShot, setSelectedShot] = useState<Shot | null>(null);
   const [isModalClosing, setIsModalClosing] = useState(false);
 
-  useEffect(() => {
-    const updateShotPositions = () => {
-      const {
-        cardHeight,
-        cardWidth,
-        columnGap,
-        rowGap,
-      } = getCanvasMetrics(canvasRef.current);
-      const nextPositions = buildVisibleFirstPositions({
-        cardHeight,
-        cardWidth,
-        columnGap,
-        rowGap,
-        viewportHeight: window.innerHeight,
-        viewportWidth: window.innerWidth,
-      });
+  const updateVirtualCards = useCallback(() => {
+    const nextVirtualCards = buildVirtualCards({
+      metrics: getCanvasMetrics(canvasRef.current),
+      offset: offsetRef.current,
+      viewportHeight: window.innerHeight,
+      viewportWidth: window.innerWidth,
+    });
 
-      setOrderedShotPositions((currentPositions) =>
-        getOrderedPositionKeys(currentPositions) ===
-        getOrderedPositionKeys(nextPositions)
-          ? currentPositions
-          : nextPositions,
-      );
-    };
-
-    updateShotPositions();
-    window.addEventListener("resize", updateShotPositions);
-
-    return () => {
-      window.removeEventListener("resize", updateShotPositions);
-    };
+    setVirtualCards((currentVirtualCards) =>
+      getVirtualCardKeys(currentVirtualCards) ===
+      getVirtualCardKeys(nextVirtualCards)
+        ? currentVirtualCards
+        : nextVirtualCards,
+    );
   }, []);
 
+  const requestVirtualCardsUpdate = useCallback(() => {
+    if (virtualFrameRef.current !== null) {
+      return;
+    }
+
+    virtualFrameRef.current = window.requestAnimationFrame(() => {
+      virtualFrameRef.current = null;
+      updateVirtualCards();
+    });
+  }, [updateVirtualCards]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      updateVirtualCards();
+    };
+
+    updateVirtualCards();
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [updateVirtualCards]);
+
   useEffect(() => {
     return () => {
+      if (virtualFrameRef.current !== null) {
+        window.cancelAnimationFrame(virtualFrameRef.current);
+      }
+
       if (exitTimerRef.current) {
         window.clearTimeout(exitTimerRef.current);
       }
@@ -639,15 +701,8 @@ export function ShotsCanvas({ isVisible, onBack }: ShotsCanvasProps) {
     }
 
     pressedShotRef.current =
-      getShotFromPoint(
-        canvasRef.current,
-        event.clientX,
-        event.clientY,
-        orderedShotPositions,
-      ) ??
+      getShotFromElementPoint(event.clientX, event.clientY) ??
       pressedShotRef.current;
-
-    const { wrapWidth, wrapHeight } = getCanvasMetrics(canvasRef.current);
 
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
@@ -656,8 +711,6 @@ export function ShotsCanvas({ isVisible, onBack }: ShotsCanvasProps) {
       startY: event.clientY,
       offsetX: offsetRef.current.x,
       offsetY: offsetRef.current.y,
-      wrapWidth,
-      wrapHeight,
       moveThreshold: event.pointerType === "touch" ? 10 : 4,
       didMove: false,
     };
@@ -679,13 +732,13 @@ export function ShotsCanvas({ isVisible, onBack }: ShotsCanvasProps) {
     }
 
     const nextOffset = {
-      x: wrapOffset(drag.offsetX + deltaX, drag.wrapWidth),
-      y: wrapOffset(drag.offsetY + deltaY, drag.wrapHeight),
+      x: drag.offsetX + deltaX,
+      y: drag.offsetY + deltaY,
     };
 
     offsetRef.current = nextOffset;
-    canvasRef.current?.style.setProperty("--canvas-x", `${nextOffset.x}px`);
-    canvasRef.current?.style.setProperty("--canvas-y", `${nextOffset.y}px`);
+    applyCanvasOffset(canvasRef.current, nextOffset);
+    requestVirtualCardsUpdate();
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -696,12 +749,7 @@ export function ShotsCanvas({ isVisible, onBack }: ShotsCanvasProps) {
     }
 
     const tappedShot =
-      getShotFromPoint(
-        canvasRef.current,
-        event.clientX,
-        event.clientY,
-        orderedShotPositions,
-      ) ??
+      getShotFromElementPoint(event.clientX, event.clientY) ??
       pressedShotRef.current;
 
     if (!drag.didMove && tappedShot) {
@@ -714,6 +762,7 @@ export function ShotsCanvas({ isVisible, onBack }: ShotsCanvasProps) {
       dragRef.current = null;
     }, 0);
     setIsDragging(false);
+    requestVirtualCardsUpdate();
   };
 
   const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
@@ -781,12 +830,11 @@ export function ShotsCanvas({ isVisible, onBack }: ShotsCanvasProps) {
       onWheel={handleWheel}
     >
       <div className={styles.canvasGrid} data-canvas-grid="true">
-        {cards.map((item) => (
+        {virtualCards.map((virtualCard) => (
           <ShotCanvasCard
-            key={`${isVisible ? "visible" : "hidden"}-${item}`}
-            index={item}
+            key={virtualCard.key}
+            cardData={virtualCard}
             isCanvasVisible={isVisible && !isLeaving}
-            shotPositions={orderedShotPositions}
             onPressStart={(shot) => {
               pressedShotRef.current = shot;
             }}

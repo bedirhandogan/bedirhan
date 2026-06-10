@@ -104,7 +104,7 @@ export const shots: Shot[] = [
     alt: "Arciel product interface popover with refined hierarchy and polished component styling.",
   },
   {
-    image: "/shots/Arciel-Icons-1.webp",
+    image: "/shots/Arciel%20Icons%201.webp",
     thumbnail: "/shots/thumbs/arciel-icons-1.webp",
     title: "Icons 1",
     subtitle: "Product",
@@ -113,7 +113,7 @@ export const shots: Shot[] = [
     alt: "Arciel product icon set with clean forms and polished interface-ready details.",
   },
   {
-    image: "/shots/Arciel-Icons-2.webp",
+    image: "/shots/Arciel%20Icons%202.webp",
     thumbnail: "/shots/thumbs/arciel-icons-2.webp",
     title: "Icons 2",
     subtitle: "Product",
@@ -131,12 +131,30 @@ export const shots: Shot[] = [
     alt: "Dimensional folder icon visual with soft material detail and clean digital styling.",
   },
   {
-    image: "/shots/Octopus-Hero-Concept.webp",
-    thumbnail: "/shots/thumbs/octopus-hero-concept.webp",
-    title: "Hero Concept",
+    image: "/shots/Radar.webp",
+    thumbnail: "/shots/thumbs/radar.webp",
+    title: "Radar",
     subtitle: "Visual",
     description:
-      "An octopus hero concept exploring expressive visual direction, dimensional character presence, and polished brand atmosphere.",
-    alt: "Octopus hero concept with expressive visual direction and polished brand atmosphere.",
+      "A polished radar visual exploring dimensional interface detail, signal rhythm, and refined digital object styling.",
+    alt: "Radar visual with dimensional interface detail and polished digital styling.",
+  },
+  {
+    image: "/shots/indicator.webp",
+    thumbnail: "/shots/thumbs/indicator.webp",
+    title: "Indicator",
+    subtitle: "Visual",
+    description:
+      "A polished indicator visual focused on refined interaction detail, depth, and clean interface-ready styling.",
+    alt: "Indicator visual with refined interaction detail and clean interface styling.",
+  },
+  {
+    image: "/shots/Keyboard.webp",
+    thumbnail: "/shots/thumbs/keyboard.webp",
+    title: "Keyboard",
+    subtitle: "Visual",
+    description:
+      "A polished keyboard visual exploring tactile form, soft material detail, and clean digital object styling.",
+    alt: "Keyboard visual with tactile form and polished digital object styling.",
   },
 ];

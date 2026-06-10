@@ -4,6 +4,7 @@
   position: relative;
   min-height: 100svh;
   overflow: hidden;
+  overscroll-behavior: none;
   background: #ffffff;
 }
 
@@ -343,15 +344,9 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  display: grid;
-  width: max-content;
-  grid-template-columns: repeat(9, var(--shot-width));
-  grid-auto-rows: var(--shot-height);
-  gap: var(--shot-gap);
-  transform: translate(
-      calc(-50% + var(--canvas-x)),
-      calc(-50% + var(--canvas-y))
-    )
+  width: 0;
+  height: 0;
+  transform: translate3d(var(--canvas-x), var(--canvas-y), 0)
     scale(var(--canvas-scale));
   transform-origin: center;
   transition: transform 120ms ease;
@@ -363,26 +358,37 @@
 }
 
 .canvasCard {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   width: var(--shot-width);
   height: var(--shot-height);
   border-radius: 32px;
-  background: #f5f5f5;
+  background: #ffffff;
   overflow: hidden;
   opacity: 0;
-  transform: scale(1.14);
+  transform: translate3d(var(--card-x), var(--card-y), 0) scale(1.14);
   transform-origin: center;
 }
 
-.canvasCardInner {
+.canvasCardBorder {
   position: absolute;
-  inset: 2px;
-  border-radius: 30px;
-  background: #f5f5f5;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  overflow: visible;
+  pointer-events: none;
 }
 
-.canvasCardHasData .canvasCardInner {
-  background: #ffffff;
+.canvasCardBorderPath {
+  fill: none;
+  stroke: rgb(0 0 0 / 4%);
+  stroke-linejoin: round;
+  stroke-width: 4px;
+  vector-effect: non-scaling-stroke;
+  shape-rendering: geometricPrecision;
 }
 
 .canvasCardHasData {
@@ -399,6 +405,7 @@
 }
 
 .canvasCardImage {
+  z-index: 0;
   object-fit: cover;
   pointer-events: none;
   user-select: none;
@@ -484,58 +491,9 @@
   animation-delay: var(--card-delay);
 }
 
-.canvasCard:nth-child(18n + 10),
-.canvasCard:nth-child(18n + 11),
-.canvasCard:nth-child(18n + 12),
-.canvasCard:nth-child(18n + 13),
-.canvasCard:nth-child(18n + 14),
-.canvasCard:nth-child(18n + 15),
-.canvasCard:nth-child(18n + 16),
-.canvasCard:nth-child(18n + 17),
-.canvasCard:nth-child(18n + 18) {
-  --brick-offset: calc((var(--shot-width) + var(--shot-gap)) / 2);
-}
-
-.canvasCard:nth-child(18n + 10),
-.canvasCard:nth-child(18n + 11),
-.canvasCard:nth-child(18n + 12),
-.canvasCard:nth-child(18n + 13),
-.canvasCard:nth-child(18n + 14),
-.canvasCard:nth-child(18n + 15),
-.canvasCard:nth-child(18n + 16),
-.canvasCard:nth-child(18n + 17),
-.canvasCard:nth-child(18n + 18) {
-  transform: translateX(var(--brick-offset, 0))
-    scale(1.14);
-}
-
-.canvasCardRevealed:nth-child(18n + 10),
-.canvasCardRevealed:nth-child(18n + 11),
-.canvasCardRevealed:nth-child(18n + 12),
-.canvasCardRevealed:nth-child(18n + 13),
-.canvasCardRevealed:nth-child(18n + 14),
-.canvasCardRevealed:nth-child(18n + 15),
-.canvasCardRevealed:nth-child(18n + 16),
-.canvasCardRevealed:nth-child(18n + 17),
-.canvasCardRevealed:nth-child(18n + 18) {
-  animation-name: canvasCardSettleBrick;
-}
-
 .shotsCanvasLeaving .canvasCardRevealed {
   animation: canvasCardLeave 420ms cubic-bezier(0.2, 0.9, 0.22, 1) both;
   animation-delay: var(--card-delay);
-}
-
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 10),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 11),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 12),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 13),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 14),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 15),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 16),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 17),
-.shotsCanvasLeaving .canvasCardRevealed:nth-child(18n + 18) {
-  animation-name: canvasCardLeaveBrick;
 }
 
 .canvasBackButton {
@@ -732,74 +690,41 @@
 @keyframes canvasCardSettle {
   0% {
     opacity: 0;
-    transform: scale(1.14);
+    transform: translate3d(var(--card-x), var(--card-y), 0) scale(1.14);
   }
 
   70% {
     opacity: 1;
-    transform: scale(0.985);
+    transform: translate3d(var(--card-x), var(--card-y), 0) scale(0.985);
   }
 
   100% {
     opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes canvasCardSettleBrick {
-  0% {
-    opacity: 0;
-    transform: translateX(var(--brick-offset)) scale(1.14);
-  }
-
-  70% {
-    opacity: 1;
-    transform: translateX(var(--brick-offset)) scale(0.985);
-  }
-
-  100% {
-    opacity: 1;
-    transform: translateX(var(--brick-offset)) scale(1);
+    transform: translate3d(var(--card-x), var(--card-y), 0) scale(1);
   }
 }
 
 @keyframes canvasCardLeave {
   0% {
     opacity: 1;
-    transform: scale(1);
+    transform: translate3d(var(--card-x), var(--card-y), 0) scale(1);
   }
 
   30% {
     opacity: 1;
-    transform: scale(0.985);
+    transform: translate3d(var(--card-x), var(--card-y), 0) scale(0.985);
   }
 
   100% {
     opacity: 0;
-    transform: scale(1.14);
-  }
-}
-
-@keyframes canvasCardLeaveBrick {
-  0% {
-    opacity: 1;
-    transform: translateX(var(--brick-offset)) scale(1);
-  }
-
-  30% {
-    opacity: 1;
-    transform: translateX(var(--brick-offset)) scale(0.985);
-  }
-
-  100% {
-    opacity: 0;
-    transform: translateX(var(--brick-offset)) scale(1.14);
+    transform: translate3d(var(--card-x), var(--card-y), 0) scale(1.14);
   }
 }
 
 @media (max-width: 560px) {
   .home {
     min-height: 100dvh;
+    touch-action: none;
   }
 
   .shell {
@@ -899,10 +824,6 @@
 
   .canvasCard {
     border-radius: 28px;
-  }
-
-  .canvasCardInner {
-    border-radius: 26px;
   }
 
   .canvasCardMeta {

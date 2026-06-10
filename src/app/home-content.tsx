@@ -64,6 +64,36 @@ export function HomeContent() {
   }, [isCanvasVisible, showShots]);
 
   useEffect(() => {
+    const resetTouchStart = () => {
+      touchStartRef.current = null;
+    };
+
+    const openCanvasFromSwipe = (event: PointerEvent) => {
+      const touchStart = touchStartRef.current;
+
+      if (
+        event.pointerType !== "touch" ||
+        !touchStart ||
+        touchStart.pointerId !== event.pointerId ||
+        isLoading ||
+        isCanvasVisible
+      ) {
+        return false;
+      }
+
+      const deltaX = event.clientX - touchStart.x;
+      const deltaY = event.clientY - touchStart.y;
+
+      if (deltaY < -52 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2) {
+        event.preventDefault();
+        resetTouchStart();
+        showShots();
+        return true;
+      }
+
+      return false;
+    };
+
     const handlePointerDown = (event: PointerEvent) => {
       if (
         event.pointerType !== "touch" ||
@@ -85,39 +115,27 @@ export function HomeContent() {
       };
     };
 
+    const handlePointerMove = (event: PointerEvent) => {
+      openCanvasFromSwipe(event);
+    };
+
     const handlePointerUp = (event: PointerEvent) => {
-      const touchStart = touchStartRef.current;
-
-      if (
-        event.pointerType !== "touch" ||
-        !touchStart ||
-        touchStart.pointerId !== event.pointerId ||
-        isLoading ||
-        isCanvasVisible
-      ) {
-        touchStartRef.current = null;
-        return;
-      }
-
-      const deltaX = event.clientX - touchStart.x;
-      const deltaY = event.clientY - touchStart.y;
-      touchStartRef.current = null;
-
-      if (deltaY < -52 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2) {
-        showShots();
-      }
+      openCanvasFromSwipe(event);
+      resetTouchStart();
     };
 
     const handlePointerCancel = () => {
-      touchStartRef.current = null;
+      resetTouchStart();
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerCancel);
 
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerCancel);
     };
