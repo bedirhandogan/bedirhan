@@ -1,4 +1,4 @@
- "use client";
+"use client";
 
 import { useSquircle } from "@cornerkit/react";
 import type { CSSProperties } from "react";
@@ -23,6 +23,22 @@ const frameShape = {
     "drop-shadow(0 4px 6px rgb(0 0 0 / 8%))",
 } as const;
 
+async function safePlay(video: HTMLVideoElement): Promise<void> {
+  try {
+    await video.play();
+  } catch (err) {
+    // iOS Low Power Mode veya policy hataları — sessizce yoksay
+    if (err instanceof DOMException && err.name === "NotAllowedError") {
+      return;
+    }
+    // AbortError: başka bir play() çağrısı iptal etti — normal durum
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return;
+    }
+    // Diğer hatalar (NetworkError vs) da sessizce geç
+  }
+}
+
 export function ShotFrame() {
   const forwardVideoRef = useRef<HTMLVideoElement>(null);
   const reverseVideoRef = useRef<HTMLVideoElement>(null);
@@ -40,9 +56,7 @@ export function ShotFrame() {
         ? forwardVideoRef.current
         : reverseVideoRef.current;
 
-    if (!video) {
-      return;
-    }
+    if (!video) return;
 
     const otherVideo =
       activeVideo === "forward"
@@ -55,22 +69,26 @@ export function ShotFrame() {
     }
 
     video.currentTime = 0;
-    const playPromise = video.play();
-
-    if (playPromise) {
-      playPromise.catch(() => {
-        // Muted inline video should autoplay; ignore browser race conditions.
-      });
-    }
+    safePlay(video);
 
     const handleEnded = () => {
-      setActiveVideo(activeVideo === "forward" ? "reverse" : "forward");
+      setActiveVideo((prev) => (prev === "forward" ? "reverse" : "forward"));
+    };
+
+    // Sayfa görünür olduğunda videoyu yeniden başlat
+    // (mobil'de sekme değiştirince video durabilir)
+    const handleVisibilityChange = () => {
+      if (!document.hidden && video.paused) {
+        safePlay(video);
+      }
     };
 
     video.addEventListener("ended", handleEnded);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       video.removeEventListener("ended", handleEnded);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [activeVideo]);
 
@@ -103,9 +121,13 @@ export function ShotFrame() {
             activeVideo === "forward" ? styles.isActiveVideo : ""
           }`}
           src="/octopus.webm"
+          // ✅ autoplay + muted birlikte olmak zorunda (mobil policy)
+          autoPlay
           muted
           playsInline
           preload="auto"
+          // ✅ poster: video yüklenemezse bile bir şey gösterir
+          poster="/octopus-poster.webp"
           aria-hidden="true"
           disablePictureInPicture
         />
@@ -115,9 +137,11 @@ export function ShotFrame() {
             activeVideo === "reverse" ? styles.isActiveVideo : ""
           }`}
           src="/octopus-reverse.webm"
+          autoPlay
           muted
           playsInline
           preload="auto"
+          poster="/octopus-poster.webp"
           aria-hidden="true"
           disablePictureInPicture
         />
