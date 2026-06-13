@@ -30,16 +30,21 @@ export function HomeContent() {
     }, 300);
   }, []);
 
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setIsLoading(false);
-    }, 1300);
+useEffect(() => {
+  const minDelay = new Promise(resolve => setTimeout(resolve, 1100));
+  
+  const pageLoad = new Promise(resolve => {
+    if (document.readyState === 'complete') {
+      resolve(true);
+    } else {
+      window.addEventListener('load', () => resolve(true), { once: true });
+    }
+  });
 
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, []);
-
+  Promise.all([minDelay, pageLoad]).then(() => {
+    setIsLoading(false);
+  });
+}, []);
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
       if (isCanvasVisible) {
